@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#0a84ff">
+<title>最寄り駅 時刻表</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;color:#111;background:#f2f2f7}
+*{box-sizing:border-box} body{margin:0;background:#f2f2f7}
+header{padding:calc(env(safe-area-inset-top) + 18px) 18px 18px;background:#0a84ff;color:#fff}
+header h1{margin:0;font-size:24px} header p{margin:5px 0 0;opacity:.9}
+main{max-width:680px;margin:auto;padding:16px}
+.card{background:#fff;border-radius:18px;padding:18px;margin-bottom:14px;box-shadow:0 2px 10px #00000010}
+h2{font-size:18px;margin:0 0 12px}
+.big{font-size:27px;font-weight:750}.muted{color:#6b6b70;font-size:14px}
+button,.linkbtn,select{font:inherit;width:100%;border-radius:13px}
+button,.linkbtn{display:block;border:0;padding:14px;margin-top:10px;background:#0a84ff;color:#fff;text-align:center;text-decoration:none}
+button.secondary{background:#e9e9ee;color:#111}
+select{padding:12px;border:1px solid #d1d1d6;background:#fff;margin:5px 0 12px}
+.row{display:flex;gap:10px}.row>*{flex:1}
+.notice{font-size:13px;color:#6b6b70;line-height:1.5}
+.rule{border-top:1px solid #eee;padding-top:12px;margin-top:12px}
+.distance{font-size:15px;color:#555}
+</style>
+</head>
+<body>
+<header>
+<h1>🚉 最寄り駅 時刻表</h1>
+<p>現在地から最寄り駅を自動判定</p>
+</header>
+
+<main>
+<section class="card">
+<div class="muted">最寄り駅</div>
+<div id="station" class="big">未取得</div>
+<div id="distance" class="distance"></div>
+<button onclick="locate()">📍 現在地から探す</button>
+<button class="secondary" onclick="showRoute()">↻ 設定を反映</button>
+</section>
+
+<section class="card">
+<h2>目的駅の設定</h2>
+<div class="muted">最寄り駅 → 目的駅</div>
+<select id="destination"></select>
+<p class="notice">最寄り駅ごとに「どこへ行くか」を登録できます。下のルールを追加すると、駅ごとに別の目的駅を自動選択できます。</p>
+</section>
+
+<section class="card">
+<h2>駅ごとのルール</h2>
+<div id="rules"></div>
+<button onclick="addRule()">＋ ルールを追加</button>
+</section>
+
+<section class="card">
+<h2>現在の区間</h2>
+<div id="route" class="big">—</div>
+<div id="day" class="muted"></div>
+<a id="timetableLink" class="linkbtn" href="#" target="_blank" rel="noopener">公式時刻表を開く</a>
+<p class="notice">1号機では、鉄道会社が公開している最新の時刻表ページを開く方式です。鉄道会社ごとにページ構成が違うため、次の版でアプリ内表示へ発展させます。</p>
+</section>
+</main>
+
+<script>
+const stations = [
+ {name:"みらい平駅",lat:35.9968,lon:140.0385,
+  timetable:"https://www.mir.co.jp/route_map/miraidaira/"},
+ {name:"守谷駅",lat:35.9514,lon:139.9910,
+  timetable:"https://www.mir.co.jp/route_map/moriya/"},
+ {name:"みどりの駅",lat:36.0367,lon:140.0585,
+  timetable:"https://www.mir.co.jp/route_map/midorino/"},
+ {name:"つくば駅",lat:36.0828,lon:140.1110,
+  timetable:"https://www.mir.co.jp/route_map/tsukuba/"},
+ {name:"竜ヶ崎駅",lat:35.9080,lon:140.1850,
+  timetable:"https://www.jorudan.co.jp/time/timetable/%E7%AB%9C%E3%83%B6%E5%B4%8E/%E9%96%A2%E9%89%84%E7%AB%9C%E3%83%B6%E5%B4%8E%E7%B7%9A/"},
+ {name:"龍ケ崎市駅",lat:35.9290,lon:140.1360,
+  timetable:"https://www.jorudan.co.jp/time/timetable/%E9%BE%8D%E3%82%B1%E5%B4%8E%E5%B8%82/%E5%B8%B8%E7%A3%90%E7%B7%9A/"}
+];
+
+const defaultRules = {
+ "みらい平駅":"守谷駅",
+ "守谷駅":"取手駅",
+ "みどりの駅":"つくば駅",
+ "つくば駅":"守谷駅",
+ "竜ヶ崎駅":"龍ケ崎市駅",
+ "龍ケ崎市駅":"竜ヶ崎駅"
+};
+
+let nearest = localStorage.getItem("nearest") || "";
+let rules = JSON.parse(localStorage.getItem("stationRules") || "null") || {...defaultRules};
+
+function save(){localStorage.setItem("stationRules",JSON.stringify(rules));}
+
+function populateDestination(selected){
+ const s=document.getElementById("destination");
+ s.innerHTML="";
+ stations.forEach(x=>{
+   const o=document.createElement("option");
+   o.value=x.name;o.textContent=x.name;
+   if(x.name===selected)o.selected=true;
+   s.appendChild(o);
+ });
+}
+
+function renderRules(){
+ const box=document.getElementById("rules"); box.innerHTML="";
+ stations.forEach(st=>{
+   const wrap=document.createElement("div"); wrap.className="rule";
+   const label=document.createElement("div"); label.className="muted"; label.textContent=st.name;
+   const sel=document.createElement("select");
+   stations.forEach(dst=>{
+     const o=document.createElement("option");
+     o.value=dst.name;o.textContent=dst.name;
+     if((rules[st.name]||"")===dst.name)o.selected=true;
+     sel.appendChild(o);
+   });
+   sel.onchange=()=>{rules[st.name]=sel.value;save(); if(nearest===st.name){populateDestination(sel.value);showRoute();}};
+   wrap.append(label,sel);box.appendChild(wrap);
+ });
+}
+
+function haversine(a,b,c,d){
+ const R=6371000, p=Math.PI/180;
+ const x=(c-a)*p,y=(d-b)*p;
+ const q=Math.sin(x/2)**2+Math.cos(a*p)*Math.cos(c*p)*Math.sin(y/2)**2;
+ return 2*R*Math.atan2(Math.sqrt(q),Math.sqrt(1-q));
+}
+
+function locate(){
+ if(!navigator.geolocation){alert("このブラウザは位置情報に対応していません。");return;}
+ navigator.geolocation.getCurrentPosition(pos=>{
+   let best=null,min=Infinity;
+   for(const st of stations){
+     const d=haversine(pos.coords.latitude,pos.coords.longitude,st.lat,st.lon);
+     if(d<min){min=d;best=st;}
+   }
+   nearest=best.name;
+   localStorage.setItem("nearest",nearest);
+   document.getElementById("station").textContent=nearest;
+   document.getElementById("distance").textContent="駅まで約 "+Math.round(min)+" m";
+   populateDestination(rules[nearest]||"");
+   showRoute();
+ },err=>{
+   alert("位置情報を取得できませんでした。Safariの設定でこのサイトの位置情報を許可してください。");
+ },{enableHighAccuracy:true,timeout:10000,maximumAge:60000});
+}
+
+function showRoute(){
+ if(!nearest){
+   document.getElementById("route").textContent="最寄り駅を取得してください";
+   return;
+ }
+ const dest=document.getElementById("destination").value;
+ rules[nearest]=dest; save();
+ const st=stations.find(x=>x.name===nearest);
+ document.getElementById("route").textContent=nearest+" → "+dest;
+ const now=new Date();
+ const wd=["日","月","火","水","木","金","土"][now.getDay()];
+ document.getElementById("day").textContent=
+   `${now.getMonth()+1}/${now.getDate()}（${wd}） ${now.getHours()}:${String(now.getMinutes()).padStart(2,"0")}`;
+ document.getElementById("timetableLink").href=st.timetable;
+}
+
+document.getElementById("destination").addEventListener("change",showRoute);
+renderRules();
+populateDestination(nearest ? (rules[nearest]||"") : Object.values(rules)[0]);
+if(nearest){
+ const st=stations.find(x=>x.name===nearest);
+ document.getElementById("station").textContent=nearest;
+ document.getElementById("timetableLink").href=st?.timetable||"#";
+ showRoute();
+}
+</script>
+</body>
+</html>
