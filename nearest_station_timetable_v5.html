@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>🚉 最寄り駅 時刻表</title>
+<style>
+*{box-sizing:border-box} body{margin:0;background:#f3f4f6;color:#111;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif}
+header{background:#111;color:#fff;padding:22px 18px;font-weight:800;font-size:24px}
+main{max-width:760px;margin:auto;padding:16px}.card{background:#fff;border-radius:24px;padding:20px;margin-bottom:16px;box-shadow:0 3px 14px #0000000d}
+h2{font-size:24px;margin:0 0 14px}.big{font-size:30px;font-weight:800}.muted{color:#666}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+button,select{font:inherit}button{border:0;border-radius:16px;padding:14px 18px;font-weight:700;background:#111;color:#fff}
+button.secondary{background:#eee;color:#111}button.mode{flex:1;background:#eee;color:#333}button.mode.active{background:#111;color:#fff}
+select{width:100%;padding:14px 16px;border:2px solid #ddd;border-radius:16px;background:#fff}
+.notice{background:#f1f2f5;border-radius:16px;padding:14px;color:#555}.error{background:#fff0f0;color:#a40000}
+.train{border:1px solid #e6e6e6;border-radius:18px;padding:16px;margin-top:10px}.train .time{font-size:28px;font-weight:800}
+.badge{display:inline-block;background:#eee;border-radius:999px;padding:5px 9px;font-size:12px;margin-left:6px}
+.small{font-size:12px;color:#777;line-height:1.6} a{color:inherit}
+@media(max-width:520px){.big{font-size:26px}}
+</style>
+</head>
+<body>
+<header><div class="header-inner"><div class="brand">STATION TIMETABLE</div><div class="title">🚉 最寄り駅 時刻表</div></div></header>
+<main>
+<section class="card">
+<h2>現在の最寄り駅</h2>
+<div id="station" class="big">未取得</div>
+<div id="distance" class="muted" style="margin-top:6px">—</div>
+<div class="row" style="margin-top:16px">
+<button id="locate">📍 現在地から探す</button><button id="refresh" class="secondary">↻ 更新</button>
+</div>
+<div id="locationMsg" class="notice" style="margin-top:12px">現在地を取得すると最寄り駅を判定します。</div>
+</section>
+
+<section class="card">
+<h2>方向</h2>
+<div class="row">
+<button id="outbound" class="mode active">行き</button>
+<button id="return" class="mode">帰り</button>
+</div>
+<div id="directionNote" class="muted" style="margin-top:12px"></div>
+</section>
+
+<section class="card">
+<h2>目的駅</h2>
+<div class="muted" style="margin-bottom:10px">最寄り駅 → 目的駅</div>
+<select id="destination"></select>
+<div class="muted" style="margin-top:10px">「行き」「帰り」で目的駅を自動で切り替えます。手動変更もできます。</div>
+</section>
+
+<section class="card">
+<h2>次の電車</h2>
+<div id="route" class="big">—</div>
+<div id="now" class="muted" style="margin-top:6px">現在時刻 —</div>
+<div id="loading" class="notice" style="display:none;margin-top:12px">時刻表を取得中…</div>
+<div id="trains"></div>
+<a id="official" href="#" target="_blank" rel="noopener" style="display:none">
+<button style="width:100%;margin-top:14px">公式時刻表を開く</button>
+</a>
+</section>
+
+<section class="card">
+<h2>設定</h2>
+<div class="small">
+このアプリで自動判定する最寄り駅は、<b>みらい平・守谷・竜ヶ崎・龍ケ崎市・取手</b>の5駅だけです。
+柏たなか・みどりの・つくばは最寄り駅候補から外しています。
+</div>
+</section>
+
+<section class="card">
+<h3 style="margin-top:0">データについて</h3>
+<div class="small">
+次の電車は公開交通データを利用した経路検索APIから取得します。実際の遅延・運休を完全には反映しない場合があります。
+最終確認は鉄道会社の公式時刻表をご利用ください。
+<br><br><a href="https://api.transit.ls8h.com/" target="_blank" rel="noopener">Transit API</a>
+</div>
+</section>
+</main>
+
+<script>
+const API="https://api.transit.ls8h.com/api/v1";
+const stations=[
+{name:"みらい平駅",lat:35.9979,lon:140.0377,official:"https://www.mir.co.jp/route_map/miraidaira/"},
+{name:"守谷駅",lat:35.9516,lon:140.0006,official:"https://www.mir.co.jp/route_map/moriya/"},
+{name:"竜ヶ崎駅",lat:35.9105,lon:140.1908,official:"https://www.kantetsu.co.jp/train/station/ryugasaki"},
+{name:"龍ケ崎市駅",lat:35.9272,lon:140.1371,official:"https://www.jreast.co.jp/estation/station/info.aspx?StationCd=1684"},
+{name:"取手駅",lat:35.8950,lon:140.0633,official:"https://www.jreast.co.jp/estation/station/info.aspx?StationCd=1057"}
+];
+// 「行き」は自宅側→目的側、「帰り」はその逆。
+// 指定された4駅だけを方向切替の対象にし、それ以外は現在の駅ごとの通常ルールを使用。
+const outbound={
+"みらい平駅":"守谷駅",
+"龍ケ崎市駅":"竜ヶ崎駅"
+};
+const inbound={
+"守谷駅":"みらい平駅",
+"竜ヶ崎駅":"龍ケ崎市駅"
+};
+let mode="outbound", currentStation=null, fromNameGlobal="", toNameGlobal="";
+
+const $=id=>document.getElementById(id);
+const destination=$("destination");
+
+function populateDestination(){
+ destination.innerHTML=stations.map(s=>`<option value="${s.name}">${s.name}</option>`).join("");
+}
+function hav(a,b){
+ const R=6371000,p=Math.PI/180,x=(b.lat-a.lat)*p,y=(b.lon-a.lon)*p;
+ const q=Math.sin(x/2)**2+Math.cos(a.lat*p)*Math.cos(b.lat*p)*Math.sin(y/2)**2;
+ return 2*R*Math.asin(Math.sqrt(q));
+}
+function nearest(lat,lon){
+ let best=null;
+ for(const s of stations){const d=hav({lat,lon},s);if(!best||d<best.d)best={s,d};}
+ return best;
+}
+function setMode(m){
+ mode=m;
+ $("outbound").classList.toggle("active",m==="outbound");
+ $("return").classList.toggle("active",m==="return");
+ const label=m==="outbound"?"行き":"帰り";
+ $("directionNote").textContent=label+"の設定に切り替えました。";
+ applyDirection();
+}
+function applyDirection(){
+ if(!currentStation)return;
+ let d=(mode==="outbound"?outbound:inbound)[currentStation.name];
+ if(d){
+   destination.value=d;
+   loadTimetable();
+ }else{
+   // 方向設定がない駅は、目的駅を空変更せず明確に知らせる
+   $("directionNote").textContent=(mode==="outbound"?"行き":"帰り")+"では、この最寄り駅の方向設定はありません。目的駅を手動で選べます。";
+   loadTimetable();
+ }
+}
+function formatSecs(sec){
+ let day=Math.floor(sec/86400);sec=((sec%86400)+86400)%86400;
+ const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60);
+ return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}${day?` (+${day}日)`:""}`;
+}
+function todayJST(){
+ const d=new Date(),parts=new Intl.DateTimeFormat("ja-JP",{timeZone:"Asia/Tokyo",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}).formatToParts(d);
+ const o={};parts.forEach(x=>o[x.type]=x.value);
+ return {date:`${o.year}${o.month}${o.day}`,time:`${o.hour}:${o.minute}:${o.second}`};
+}
+async function suggestStation(name){
+ const r=await fetch(`${API}/locations/suggest?q=${encodeURIComponent(name)}&limit=10`);
+ if(!r.ok)throw new Error("駅検索に失敗しました");
+ const j=await r.json(),arr=j.stations||j.locations||[];
+ return arr.find(x=>x.name===name)||arr.find(x=>(x.name||"").replace(/駅$/,"")===(name||"").replace(/駅$/,""))||arr[0];
+}
+async function getTrains(fromName,toName){
+ const [from,to]=await Promise.all([suggestStation(fromName),suggestStation(toName)]);
+ if(!from?.id||!to?.id)throw new Error("駅IDを取得できませんでした");
+ const jt=todayJST();
+ const q=new URLSearchParams({
+   from:from.id,to:to.id,date:jt.date,time:jt.time,type:"departure",
+   numItineraries:"6",maxTransfers:"0"
+ });
+ const r=await fetch(`${API}/plan?${q}`);
+ if(!r.ok)throw new Error("経路検索に失敗しました");
+ return r.json();
+}
+function renderTrains(j){
+ const box=$("trains");box.innerHTML="";
+ const journeys=(j.journeys||[]).filter(x=>x&&typeof x.departureSecs==="number");
+ if(!journeys.length){box.innerHTML='<div class="notice error">次の電車が見つかりませんでした。公式時刻表で確認してください。</div>';return;}
+ journeys.slice(0,5).forEach((x,i)=>{
+   const transit=(x.legs||[]).find(l=>l.kind==="transit");
+   const type=transit?.trainType||"",line=transit?.routeName||"",head=transit?.headsign||"";
+   const dur=(typeof x.arrivalSecs==="number"&&typeof x.departureSecs==="number")?Math.max(0,Math.round((x.arrivalSecs-x.departureSecs)/60)):0;
+   const el=document.createElement("div");el.className="train";
+   el.innerHTML=`<div><span class="time">${formatSecs(x.departureSecs)}</span><span class="badge">${i===0?"次の電車":`${i+1}本目`}</span></div>
+   <div style="font-weight:700;margin-top:7px">${fromNameGlobal} → ${toNameGlobal}</div>
+   <div class="muted" style="margin-top:5px">${type}${line?"・"+line:""}${head?"・"+head:""}${dur?"・約"+dur+"分":""}</div>
+   <div class="small" style="margin-top:6px">到着 ${formatSecs(x.arrivalSecs)}</div>`;
+   box.appendChild(el);
+ });
+}
+async function loadTimetable(){
+ if(!currentStation)return;
+ const to=destination.value;fromNameGlobal=currentStation.name;toNameGlobal=to;
+ $("route").textContent=`${fromNameGlobal} → ${toNameGlobal}`;
+ $("now").textContent=`現在 ${todayJST().time}`;
+ $("loading").style.display="block";$("trains").innerHTML="";
+ const s=stations.find(x=>x.name===currentStation.name);
+ if(s){$("official").href=s.official;$("official").style.display="block";}
+ try{renderTrains(await getTrains(fromNameGlobal,toNameGlobal));}
+ catch(e){$("trains").innerHTML=`<div class="notice error">次の電車を自動取得できませんでした。<br>${e.message}<br><br>下の「公式時刻表を開く」で確認してください。</div>`;}
+ finally{$("loading").style.display="none";}
+}
+function locate(){
+ if(!navigator.geolocation){$("locationMsg").textContent="このブラウザでは位置情報を利用できません。";return;}
+ $("locationMsg").textContent="位置情報を取得中…";
+ navigator.geolocation.getCurrentPosition(pos=>{
+   const n=nearest(pos.coords.latitude,pos.coords.longitude);currentStation={...n.s};
+   $("station").textContent=currentStation.name;$("distance").textContent=`現在地から約 ${Math.round(n.d)} m`;
+   $("locationMsg").textContent="位置情報を取得しました。";
+   applyDirection();
+ },()=>{$("locationMsg").textContent="位置情報を取得できませんでした。Safariの位置情報許可を確認してください。";},
+ {enableHighAccuracy:true,timeout:12000,maximumAge:30000});
+}
+$("locate").onclick=locate;$("refresh").onclick=loadTimetable;
+$("outbound").onclick=()=>setMode("outbound");$("return").onclick=()=>setMode("inbound");
+destination.onchange=loadTimetable;
+populateDestination();
+setInterval(()=>{if(currentStation)loadTimetable()},60000);
+locate();
+</script>
+
+<script>
+(function(){
+  const GO={
+    "みらい平駅":"守谷駅",
+    "龍ケ崎市駅":"竜ヶ崎駅"
+  };
+  const BACK={
+    "守谷駅":"みらい平駅",
+    "竜ヶ崎駅":"龍ケ崎市駅"
+  };
+  let direction="go";
+  const go=document.getElementById("go"), back=document.getElementById("back");
+  function setDir(d){
+    direction=d;
+    if(go)go.classList.toggle("active",d==="go");
+    if(back)back.classList.toggle("active",d==="back");
+    if(!currentStation)return;
+    const map=d==="go"?GO:BACK;
+    if(map[currentStation.name]) destination.value=map[currentStation.name];
+    loadTimetable();
+  }
+  if(go)go.onclick=()=>setDir("go");
+  if(back)back.onclick=()=>setDir("back");
+  window.setDirection=setDir;
+})();
+</script>
+</body>
+</html>
