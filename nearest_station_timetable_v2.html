@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#0a84ff">
+<title>最寄り駅 時刻表 2号機</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;color:#111;background:#f2f2f7}
+*{box-sizing:border-box}body{margin:0;background:#f2f2f7}
+header{padding:calc(env(safe-area-inset-top) + 18px) 18px 20px;background:#0a84ff;color:#fff}
+header h1{margin:0;font-size:25px}header p{margin:6px 0 0;opacity:.92;font-size:15px}
+main{max-width:700px;margin:auto;padding:15px}
+.card{background:#fff;border-radius:20px;padding:18px;margin-bottom:14px;box-shadow:0 2px 12px #0000000c}
+h2{font-size:19px;margin:0 0 12px}.muted{color:#6b6b70;font-size:14px}.big{font-size:29px;font-weight:800}.distance{font-size:15px;color:#555;margin-top:2px}
+button,select{font:inherit;width:100%;border-radius:14px}button{display:block;border:0;padding:14px;margin-top:10px;background:#0a84ff;color:#fff;font-weight:650}button.secondary{background:#e9e9ee;color:#111}
+select{padding:12px;border:1px solid #d1d1d6;background:#fff;margin:5px 0 12px}
+.row{display:flex;gap:9px}.row>*{flex:1}.notice{font-size:13px;color:#6b6b70;line-height:1.55}
+.status{padding:10px 12px;border-radius:12px;background:#f2f2f7;font-size:13px;color:#555;margin-top:10px}
+.route{font-size:21px;font-weight:750}.now{font-size:14px;color:#666;margin-top:3px}
+.train{border:1px solid #e5e5ea;border-radius:16px;padding:13px;margin-top:10px;background:#fff}.train.first{border:2px solid #0a84ff;background:#f6f9ff}
+.trainTop{display:flex;align-items:baseline;justify-content:space-between;gap:8px}.dep{font-size:26px;font-weight:800}.arr{font-size:18px;font-weight:700}.arrow{color:#888;padding:0 4px}.meta{font-size:13px;color:#666;margin-top:4px}.badge{display:inline-block;padding:3px 7px;border-radius:8px;background:#e9e9ee;margin-right:5px}
+.rule{border-top:1px solid #eee;padding-top:12px;margin-top:12px}.rule:first-child{border-top:0;padding-top:0;margin-top:0}
+.smallbtn{padding:9px;font-size:13px;margin-top:4px}.danger{background:#eee;color:#555}
+a.link{display:block;text-align:center;background:#111;color:#fff;text-decoration:none;padding:13px;border-radius:13px;margin-top:10px}
+footer{padding:0 4px 30px;color:#777;font-size:11px;line-height:1.5}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid #ccc;border-top-color:#0a84ff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px;margin-right:5px}@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<header><h1>🚉 最寄り駅 時刻表</h1><p>現在地 → 最寄り駅 → 設定した目的駅 → 次の電車</p></header>
+<main>
+<section class="card">
+<div class="muted">最寄り駅</div><div id="station" class="big">未取得</div><div id="distance" class="distance"></div>
+<button onclick="locate()">📍 現在地から探す</button><button class="secondary" onclick="refreshAll()">↻ 時刻表を更新</button>
+<div id="locStatus" class="status">現在地を取得すると最寄り駅を判定します。</div>
+</section>
+
+<section class="card">
+<h2>目的駅</h2><div class="muted">最寄り駅 → 目的駅</div><select id="destination"></select>
+<div class="notice">駅ごとのルールが登録されていれば、最寄り駅に応じて自動選択します。</div>
+</section>
+
+<section class="card">
+<h2>次の電車</h2><div id="route" class="route">—</div><div id="now" class="now"></div>
+<div id="trains"><div class="status">最寄り駅を取得してください。</div></div>
+<a id="official" class="link" href="#" target="_blank" rel="noopener">公式時刻表を開く</a>
+</section>
+
+<section class="card">
+<h2>駅ごとのルール</h2><div id="rules"></div><button onclick="addRule()">＋ ルールを追加</button>
+<p class="notice">例：みらい平駅なら守谷駅、守谷駅なら取手駅、というように設定できます。設定はこのiPhoneのSafariに保存されます。</p>
+</section>
+</main>
+<footer>時刻データは外部の公共交通APIを利用します。API障害・ダイヤ改正・臨時変更等により表示できない場合があります。表示できない場合は公式時刻表を確認してください。</footer>
+
+<script>
+const API='https://api.transit.ls8h.com/api/v1';
+const stations=[
+{name:'みらい平駅',lat:35.9968,lon:140.0385,official:'https://www.mir.co.jp/route_map/miraidaira/'},
+{name:'守谷駅',lat:35.9514,lon:139.9910,official:'https://www.mir.co.jp/route_map/moriya/'},
+{name:'みどりの駅',lat:36.0367,lon:140.0585,official:'https://www.mir.co.jp/route_map/midorino/'},
+{name:'つくば駅',lat:36.0828,lon:140.1110,official:'https://www.mir.co.jp/route_map/tsukuba/'},
+{name:'柏たなか駅',lat:35.9092,lon:139.9572,official:'https://www.mir.co.jp/route_map/kashiwa-tanaka/'},
+{name:'竜ヶ崎駅',lat:35.9080,lon:140.1850,official:'https://www.kantetsu.co.jp/train/'},
+{name:'龍ケ崎市駅',lat:35.9290,lon:140.1360,official:'https://www.jreast.co.jp/estation/station/info.aspx?StationCd=1552'},
+{name:'取手駅',lat:35.8961,lon:140.0632,official:'https://www.jreast.co.jp/estation/station/info.aspx?StationCd=1033'}
+];
+const defaultRules={
+'みらい平駅':'守谷駅','守谷駅':'取手駅','みどりの駅':'つくば駅','つくば駅':'守谷駅','柏たなか駅':'守谷駅','竜ヶ崎駅':'龍ケ崎市駅','龍ケ崎市駅':'竜ヶ崎駅','取手駅':'守谷駅'
+};
+let nearest=localStorage.getItem('nearest2')||'';
+let rules=JSON.parse(localStorage.getItem('stationRules2')||'null')||{...defaultRules};
+let busy=false;
+function save(){localStorage.setItem('stationRules2',JSON.stringify(rules));}
+function haversine(a,b,c,d){const R=6371000,p=Math.PI/180,x=(c-a)*p,y=(d-b)*p,q=Math.sin(x/2)**2+Math.cos(a*p)*Math.cos(c*p)*Math.sin(y/2)**2;return 2*R*Math.atan2(Math.sqrt(q),Math.sqrt(1-q));}
+function stationObj(n){return stations.find(s=>s.name===n);}
+function populateDestination(selected){const el=document.getElementById('destination');el.innerHTML='';stations.forEach(s=>{const o=document.createElement('option');o.value=s.name;o.textContent=s.name;if(s.name===selected)o.selected=true;el.appendChild(o);});}
+function renderRules(){const box=document.getElementById('rules');box.innerHTML='';Object.keys(rules).forEach(st=>{if(!stationObj(st))return;const wrap=document.createElement('div');wrap.className='rule';const lab=document.createElement('div');lab.className='muted';lab.textContent=st;const row=document.createElement('div');row.className='row';const sel=document.createElement('select');stations.forEach(dst=>{const o=document.createElement('option');o.value=dst.name;o.textContent=dst.name;if(rules[st]===dst.name)o.selected=true;sel.appendChild(o);});sel.onchange=()=>{rules[st]=sel.value;save();if(st===nearest){populateDestination(sel.value);loadTrains();}};const del=document.createElement('button');del.textContent='削除';del.className='danger smallbtn';del.onclick=()=>{delete rules[st];save();renderRules();if(st===nearest){populateDestination('');loadTrains();}};row.append(sel,del);wrap.append(lab,row);box.append(wrap);});}
+function addRule(){const unused=stations.find(s=>!rules[s.name]);if(!unused){alert('すべての駅にルールがあります。');return;}rules[unused.name]=stations.find(s=>s.name!==unused.name)?.name||'';save();renderRules();}
+function setStation(st,min){nearest=st.name;localStorage.setItem('nearest2',nearest);document.getElementById('station').textContent=st.name;document.getElementById('distance').textContent='駅まで約 '+Math.round(min)+' m';populateDestination(rules[nearest]||'');document.getElementById('locStatus').textContent='位置情報を取得しました。';document.getElementById('official').href=st.official;loadTrains();}
+function locate(){if(!navigator.geolocation){alert('このブラウザは位置情報に対応していません。');return;}document.getElementById('locStatus').innerHTML='<span class="spinner"></span>現在地を取得中…';navigator.geolocation.getCurrentPosition(pos=>{let best=null,min=Infinity;for(const s of stations){const d=haversine(pos.coords.latitude,pos.coords.longitude,s.lat,s.lon);if(d<min){min=d;best=s;}}setStation(best,min);},err=>{document.getElementById('locStatus').textContent='位置情報を取得できませんでした。Safariでこのサイトの位置情報を「許可」にしてください。';},{enableHighAccuracy:true,timeout:12000,maximumAge:60000});}
+function localDate(){const d=new Date();const pad=n=>String(n).padStart(2,'0');return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}`;}
+function localTime(){const d=new Date();return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
+function formatSec(v){if(typeof v==='string'&&/^\d{1,2}:\d{2}/.test(v))return v.slice(0,5);if(typeof v!=='number')return '';let day='';if(v<0){v+=86400;day='（前日）'}else if(v>=86400){v-=86400;day='（翌日）'}const h=Math.floor(v/3600),m=Math.floor((v%3600)/60);return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+day;}
+function secondsNow(){const d=new Date();return d.getHours()*3600+d.getMinutes()*60+d.getSeconds();}
+function findTimesDeep(obj,out=[]){if(!obj||typeof obj!=='object')return out;if(Array.isArray(obj)){for(const x of obj)findTimesDeep(x,out);return out;}const keys=Object.keys(obj);const depKeys=['departureTime','departure_time','departAt','depart_at','departure'];const arrKeys=['arrivalTime','arrival_time','arriveAt','arrive_at','arrival'];let dep=null,arr=null;for(const k of depKeys)if(obj[k]!=null){dep=obj[k];break;}for(const k of arrKeys)if(obj[k]!=null){arr=obj[k];break;}if(dep!=null){out.push({dep,arr,headsign:obj.headsign||obj.destination||obj.to?.name||obj.routeName||obj.route_name||'',route:obj.route?.name||obj.route?.shortName||obj.route_short_name||obj.mode||''});}for(const k of keys)findTimesDeep(obj[k],out);return out;}
+async function suggestStation(name){const r=await fetch(API+'/locations/suggest?q='+encodeURIComponent(name)+'&limit=5');if(!r.ok)throw new Error('駅検索失敗');const j=await r.json();const arr=j.data||j.results||j.locations||j;if(!Array.isArray(arr))return null;return arr.find(x=>String(x.name||x.stationName||'').replace(/駅$/,'')===name.replace(/駅$/,''))||arr[0]||null;}
+async function loadTrains(){if(!nearest)return;const from=stationObj(nearest),to=stationObj(document.getElementById('destination').value);if(!from||!to)return;document.getElementById('route').textContent=from.name+' → '+to.name;document.getElementById('now').textContent='現在 '+new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});document.getElementById('trains').innerHTML='<div class="status"><span class="spinner"></span>次の電車を検索中…</div>';document.getElementById('official').href=from.official;busy=true;try{const date=localDate(),time=localTime();const u=API+'/plan?from='+encodeURIComponent('geo:'+from.lat+','+from.lon)+'&to='+encodeURIComponent('geo:'+to.lat+','+to.lon)+'&date='+date+'&time='+encodeURIComponent(time)+'&type=departure&numItineraries=5&maxTransfers=0';const r=await fetch(u);if(!r.ok)throw new Error('API '+r.status);const j=await r.json();const raw=findTimesDeep(j,[]);const seen=new Set(),items=[];for(const x of raw){const dep=formatSec(x.dep);if(!dep||seen.has(dep))continue;seen.add(dep);items.push({...x,dep,arr:formatSec(x.arr)});if(items.length>=5)break;}if(!items.length)throw new Error('時刻を抽出できませんでした');renderTrains(items);}catch(e){document.getElementById('trains').innerHTML='<div class="status">次の電車を自動取得できませんでした。<br>下の「公式時刻表を開く」を使って確認してください。<br><small>'+String(e.message||e)+'</small></div>';}finally{busy=false;}}
+function renderTrains(items){const box=document.getElementById('trains');box.innerHTML='';items.forEach((x,i)=>{const d=document.createElement('div');d.className='train'+(i===0?' first':'');const top=document.createElement('div');top.className='trainTop';const dep=document.createElement('span');dep.className='dep';dep.textContent=x.dep;const arr=document.createElement('span');arr.className='arr';arr.textContent=x.arr?'→ '+x.arr:'';top.append(dep,arr);const meta=document.createElement('div');meta.className='meta';meta.innerHTML='<span class="badge">'+(x.route||'列車')+'</span>'+(x.headsign||'');d.append(top,meta);box.append(d);});}
+async function refreshAll(){if(busy)return;renderRules();if(nearest)await loadTrains();}
+document.getElementById('destination').addEventListener('change',()=>{if(nearest){rules[nearest]=document.getElementById('destination').value;save();loadTrains();}});
+renderRules();populateDestination(nearest?(rules[nearest]||''):Object.values(rules)[0]||'');
+if(nearest){const st=stationObj(nearest);if(st){document.getElementById('station').textContent=st.name;document.getElementById('locStatus').textContent='保存済みの最寄り駅を表示中。';document.getElementById('official').href=st.official;loadTrains();}}
+setInterval(()=>{if(nearest&&!busy)loadTrains();},60000);
+</script>
+</body>
+</html>
